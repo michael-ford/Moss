@@ -14,6 +14,7 @@ import allel
 import argparse
 import numpy as np
 import sys
+import subprocess
 
 
 def strelka2(inputs) -> dict:
@@ -102,7 +103,16 @@ def get_contig_headers(input_file):
             contig_lines.append(line)
     return contig_lines
 
-def write_vcf(dict_chrom_pos_gt: dict, output, input_files, is_split, contig_lines):
+def sort_and_index_vcf(vcf_prefix: str, chrom: str = None) -> str:
+    """Sort VCF file using bcftools and index with tabix"""
+    input_vcf = f"{vcf_prefix}.{chrom}.vcf" if chrom else f"{vcf_prefix}.vcf"
+    sorted_vcf = f"{vcf_prefix}.{chrom}.sorted.vcf.gz" if chrom else f"{vcf_prefix}.sorted.vcf.gz"
+    subprocess.run(['bcftools', 'sort', input_vcf, '-Oz', '-o', sorted_vcf], check=True)
+    subprocess.run(['tabix', '-p', 'vcf', sorted_vcf], check=True)
+    subprocess.run(['rm', input_vcf])  # Remove unsorted VCF
+    return sorted_vcf
+
+def write_vcf(dict_chrom_pos_gt: dict, output_prefix, input_files, is_split, contig_lines):
     header = """##fileformat=VCFv4.1
 ##FILTER=<ID=PASS,Description="All filters passed">
 ##INFO=<ID=NUMPASS,Number=1,Type=Integer,Description=\"Number of samples that pass the base caller\">
@@ -113,8 +123,9 @@ def write_vcf(dict_chrom_pos_gt: dict, output, input_files, is_split, contig_lin
     if is_split:
         for chrom, pos_info in dict_chrom_pos_gt.items():
             prefix = 'chr' if not chrom.startswith("chr") else ''
-            out_filename = output[:output.rfind('.')] + f".{prefix}{chrom}.vcf"
-            with open(out_filename, "w") as ofile:
+            chrom_name = f"{prefix}{chrom}"
+            temp_out = f"{output_prefix}.{chrom_name}.vcf"
+            with open(temp_out, "w") as ofile:
                 ofile.write(header)
                 chunk = []
                 cnt = 0
@@ -131,8 +142,10 @@ def write_vcf(dict_chrom_pos_gt: dict, output, input_files, is_split, contig_lin
                         chunk = []
                         cnt = 0
                 ofile.writelines(chunk)
+            sort_and_index_vcf(output_prefix, chrom_name)
     else:
-        with open(output, "w") as ofile:
+        temp_out = f"{output_prefix}.vcf"
+        with open(temp_out, "w") as ofile:
             ofile.write(header)
             for chrom, pos_info in dict_chrom_pos_gt.items():
                 chunk = []
@@ -150,6 +163,7 @@ def write_vcf(dict_chrom_pos_gt: dict, output, input_files, is_split, contig_lin
                         chunk = []
                         cnt = 0
                 ofile.writelines(chunk)
+        sort_and_index_vcf(output_prefix)
 
 def main(args):
     if args.input_files is not None:
@@ -177,7 +191,7 @@ if __name__ == "__main__":
     parser.add_argument("--normal-name", help="name of the normal sample in the VCF file, only used for Mutect")
     parser.add_argument("-f", "--input-files", help="input tumor result VCF file list")
     parser.add_argument("-t", "--tool", help="[M|m|Mutect] or [S|s|Strelka]", required=True)
-    parser.add_argument("-o", "--output", help="output candidates VCF file")
+    parser.add_argument("-o", "--output", help="output prefix for VCF files", required=True)
     parser.add_argument("--split", help="split output VCF by chromosomes", action="store_true")
     args = parser.parse_args(None if sys.argv[1:] else ['-h'])
 
