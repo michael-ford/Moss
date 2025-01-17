@@ -94,12 +94,22 @@ def mutect2(inputs, normal_name) -> dict:
     return chrom_pos_gt
 
 
-def write_vcf(dict_chrom_pos_gt: dict, output, input_files, is_split: bool):
+def get_contig_headers(input_file):
+    contig_lines = []
+    headers = allel.read_vcf_headers(input_file)
+    for line in headers.headers:
+        if line.startswith('##contig='):
+            contig_lines.append(line)
+    return contig_lines
+
+def write_vcf(dict_chrom_pos_gt: dict, output, input_files, is_split, contig_lines):
     header = """##fileformat=VCFv4.1
 ##FILTER=<ID=PASS,Description="All filters passed">
 ##INFO=<ID=NUMPASS,Number=1,Type=Integer,Description=\"Number of samples that pass the base caller\">
-##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">
-#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tNORMAL\n"""
+##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">\n"""
+    header += ''.join(contig_lines)
+    header += "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tNORMAL\n"
+    
     if is_split:
         for chrom, pos_info in dict_chrom_pos_gt.items():
             prefix = 'chr' if not chrom.startswith("chr") else ''
@@ -156,7 +166,9 @@ def main(args):
         chrom_pos_gt = mutect2(args.input, args.normal_name)
     elif args.tool[0].lower() == 's':
         chrom_pos_gt = strelka2(args.input)
-    write_vcf(chrom_pos_gt, args.output, args.input_files, args.split)
+    
+    contig_lines = get_contig_headers(args.input[0])
+    write_vcf(chrom_pos_gt, args.output, args.input_files, args.split, contig_lines)
 
 
 if __name__ == "__main__":
