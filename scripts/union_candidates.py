@@ -60,21 +60,45 @@ def mutect2(inputs, normal_name) -> dict:
     for ifile in inputs:
         # ["variants/CHROM", "variants/POS", "variants/REF", "variants/ALT", "calldata/GT"]
         in_vcf = allel.read_vcf(ifile, fields='*')
+        if in_vcf is None:
+            print(f"Warning: Could not read VCF file {ifile}")
+            continue
+            
+        # Check for required fields
+        has_artifact_filter = 'variants/FILTER_artifact_in_normal' in in_vcf
+        
         idx_normal = np.argwhere(in_vcf["samples"] == normal_name)[0][0]
-        zipped = zip(in_vcf["variants/CHROM"][in_vcf["variants/is_snp"]],
-            in_vcf["variants/POS"][in_vcf["variants/is_snp"]],
-            in_vcf["variants/REF"][in_vcf["variants/is_snp"]],
-            in_vcf["variants/ALT"][in_vcf["variants/is_snp"]],
-            in_vcf["calldata/GT"][in_vcf["variants/is_snp"]],
-            in_vcf["variants/FILTER_PASS"][in_vcf["variants/is_snp"]],
-            in_vcf["variants/FILTER_artifact_in_normal"][in_vcf["variants/is_snp"]])
-        for chrom, pos, ref, alt, gt, is_pass, is_artifact in zipped:
-            if is_artifact:
+        
+        # Get the basic fields that are always needed
+        snp_mask = in_vcf["variants/is_snp"]
+        chroms = in_vcf["variants/CHROM"][snp_mask]
+        positions = in_vcf["variants/POS"][snp_mask]
+        refs = in_vcf["variants/REF"][snp_mask]
+        alts = in_vcf["variants/ALT"][snp_mask]
+        gts = in_vcf["calldata/GT"][snp_mask]
+        pass_flags = in_vcf["variants/FILTER_PASS"][snp_mask]
+        
+        # Create a default "no artifact" mask if the field doesn't exist
+        if has_artifact_filter:
+            artifact_flags = in_vcf["variants/FILTER_artifact_in_normal"][snp_mask]
+        else:
+            # Create a mask of all False (no artifacts) with the same shape as other arrays
+            artifact_flags = np.zeros_like(pass_flags, dtype=bool)
+            print(f"Note: 'variants/FILTER_artifact_in_normal' field not found in {ifile}. Treating all variants as non-artifacts.")
+        
+        # Process variants
+        for i in range(len(chroms)):
+            if artifact_flags[i]:
                 continue
-            chrom = str(chrom)
-            pos = int(pos)
+                
+            chrom = str(chroms[i])
+            pos = int(positions[i])
+            ref = refs[i]
+            alt = alts[i][0]  # First ALT allele
+            gt = gts[i]
+            is_pass = pass_flags[i]
+            
             num_pass = int(is_pass)
-            alt = alt[0]
             ref_alt = ref + alt
             normal = ref_alt[gt[idx_normal][0]] + ref_alt[gt[idx_normal][1]]
             if gt[idx_normal][0] != 0 or gt[idx_normal][1] != 0:
@@ -90,6 +114,7 @@ def mutect2(inputs, normal_name) -> dict:
                     chrom_pos_gt[chrom][pos] = {"gt": normal, "num_pass": num_pass}
             else:
                 chrom_pos_gt[chrom] = {pos: {"gt": normal, "num_pass": num_pass}}
+                
     print(f"Disagreement on normal: {cnt} times.")
     print(f"Not ref: {cnt_het_hom} times.")
     return chrom_pos_gt
